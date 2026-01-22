@@ -3,8 +3,8 @@
 const today = tp.date.now("YYYY-MM-DD");
 const momentDate = window.moment(today, "YYYY-MM-DD", true);
 const titleName = `周报_${momentDate.format("YYMMDD")}`;
-const createTime = tp.file.creation_date();
-const modificationDate = tp.file.last_modified_date("dddd Do MMMM YYYY HH:mm:ss");
+const createTime = tp.file.creation_date("YYYY-MM-Do HH:mm:ss dddd");
+const modificationDate = tp.file.last_modified_date("YYYY-MM-Do HH:mm:ss dddd");
 -%>
 标题: <% titleName %>
 tags:
@@ -12,6 +12,8 @@ tags:
 创建时间:  <% createTime %>
 编辑时间:  <% modificationDate %>
 ---
+
+<!-- markdownlint-disable MD024 -->
 
 
 

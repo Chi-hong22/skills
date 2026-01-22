@@ -140,8 +140,26 @@ def calculateOutputPath(base_path: str, date: datetime) -> Path:
     return Path(base_path) / year / month / filename
 
 
+def formatDateWithOrdinal(dt: datetime) -> str:
+    """
+    格式化日期为 YYYY-MM-Do HH:mm:ss dddd 格式
+    
+    Args:
+        dt: 日期时间对象
+    
+    Returns:
+        格式化后的字符串，如 "2026-01-22nd 10:36:16 Thursday"
+    """
+    day = dt.day
+    if 11 <= day <= 13:
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
+    
+    return f"{dt.strftime('%Y-%m-')}{day}{suffix} {dt.strftime('%H:%M:%S %A')}"
+
+
 def generateWeeklyReportTemplate(
-    reporter_name: str,
     start_date: datetime,
     end_date: datetime,
     tags: Set[str],
@@ -151,7 +169,6 @@ def generateWeeklyReportTemplate(
     生成周报模板内容
     
     Args:
-        reporter_name: 汇报人姓名
         start_date: 开始日期
         end_date: 结束日期
         tags: 标签集合
@@ -160,9 +177,8 @@ def generateWeeklyReportTemplate(
     Returns:
         周报模板 Markdown 内容
     """
-    week_number = calculateWeekNumber(end_date)
     title = f"周报_{end_date.strftime('%y%m%d')}"
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now = formatDateWithOrdinal(datetime.now())
     
     # 确保包含 '日志/周报' tag
     tags_list = ['日志/周报']
@@ -189,14 +205,15 @@ def generateWeeklyReportTemplate(
 {frontmatter_yaml.strip()}
 ---
 
+<!-- markdownlint-disable MD024 -->
+
 # {title}
 
-**汇报人**：{reporter_name}
-**时间范围**：{start_date.strftime('%Y-%m-%d')} 至 {end_date.strftime('%Y-%m-%d')}（第{week_number}周）
+**时间范围**：{start_date.strftime('%Y-%m-%d')} 至 {end_date.strftime('%Y-%m-%d')}
 **关键进展摘要**：
 
-- [待填充：摘要点1，含核心指标]
-- [待填充：摘要点2，含论文核心进度]
+- [待填充：摘要点1，体现本周核心突破]
+- [待填充：摘要点2，体现思考与进步]
 
 ---
 
@@ -204,15 +221,15 @@ def generateWeeklyReportTemplate(
 
 ### 1. 研究内容标题
 
-[待填充：一句话概括本周该项目的核心工作]
+[待填充：一句话概括]
 
 ### 2. 研究方法
 
-- [待填充：描述使用的具体算法、策略] 【日期·分类】
+- [待填充：算法/策略/实验设置] 【日期·分类】
 
 ### 3. 技术路线
 
-- [待填充：按步骤描述] 【日期·分类】
+- [待填充：实现步骤] 【日期·分类】
 
 ### 4. 核心模型
 
@@ -222,18 +239,19 @@ def generateWeeklyReportTemplate(
 ### 5. 仿真结果
 
 - **核心指标**：[待填充] 【日期·分类】
+- 训练曲线见图1
 
 ### 6. 存在问题
 
-- [待填充：当前具体遇到的工程或实验问题] 【日期·分类】
+- [待填充：工程/实验问题] 【日期·分类】
 
 ### 7. 难点问题
 
-- [待填充：深层次的理论或机制难点] 【日期·分类】
+- [待填充：理论/机制难点] 【日期·分类】
 
 ### 8. 解决思路
 
-- [待填充：已执行的尝试] 【日期·分类】
+- [待填充：尝试与计划] 【日期·分类】
 
 ### 9. 小论文撰写任务
 
@@ -244,9 +262,9 @@ def generateWeeklyReportTemplate(
 
 ## 附图索引
 
-- **图1**：[待填充：图片内容描述] 【日期·分类】
+- **图1**：[待填充：描述] 【日期·分类】
 
----
+![[attachments/image.png|描述]]
 """
     
     return template
@@ -258,8 +276,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python generate_weekly_report.py --input daily-logs/ --reporter "张三" --output weekly-report.md
-  python generate_weekly_report.py --input daily-logs/2026-01/ --reporter "李四" --base-path "/04_自我管理/00_日志"
+  python generate_weekly_report.py --input daily-logs/ --output weekly-report.md
+  python generate_weekly_report.py --input daily-logs/2026-01/ --base-path "/04_自我管理/00_日志"
         """
     )
     
@@ -268,13 +286,6 @@ def main():
         type=str,
         required=True,
         help='日报文件或文件夹路径'
-    )
-    
-    parser.add_argument(
-        '--reporter',
-        type=str,
-        default='[姓名]',
-        help='汇报人姓名（默认: [姓名]）'
     )
     
     parser.add_argument(
@@ -328,7 +339,6 @@ def main():
     
     # 生成周报模板
     template = generateWeeklyReportTemplate(
-        reporter_name=args.reporter,
         start_date=start_date,
         end_date=end_date,
         tags=tags,
