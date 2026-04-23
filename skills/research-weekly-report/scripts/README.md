@@ -4,16 +4,18 @@
 一旦本文件夹内容发生变化，请更新本文档。
 -->
 
-科研周报生成的辅助脚本。
+科研周报生成的辅助脚本，用于处理日报元数据等确定性、重复性任务。
+
+## 文件说明
+
+| 文件 | 功能 |
+|------|------|
+| `generate_weekly_report.py` | 解析上一份周报时间范围、筛选本次候选日志、提取 tags、生成周报模板骨架 |
+| `requirements.txt` | Python 依赖：`pyyaml>=6.0`、`python-frontmatter>=1.0.0` |
 
 ## generate_weekly_report.py
 
-周报模板生成脚本。
-
-**功能**：
-- 从日报 frontmatter 提取 tags（保留 `日志/周报`，过滤其他 `日志/` 前缀）
-- 计算日期范围
-- 生成符合 SKILL.md 格式的周报模板
+**定位**：辅助 AI 生成周报的工具脚本，负责确定性的“范围判定 + 候选日志筛选 + 模板骨架生成”任务，不负责最终内容填充。
 
 **安装**：
 
@@ -27,18 +29,39 @@ pip install -r requirements.txt
 # 基本用法
 python generate_weekly_report.py --input daily-logs/
 
-# 指定输出
-python generate_weekly_report.py --input daily-logs/2026-01/ --output report.md
+# 指定历史周报根目录
+python generate_weekly_report.py --input daily-logs/2026-01/ --weekly-root weekly-reports/
 
-# 自定义路径
-python generate_weekly_report.py --input daily-logs/ --base-path "/我的笔记/日志"
+# 显式指定上一份周报
+python generate_weekly_report.py --input daily-logs/ --previous-report weekly-reports/2026/01/周报_260118.md
+
+# 指定输出并跳过交互确认
+python generate_weekly_report.py --input daily-logs/ --output report.md --auto-confirm
 ```
 
 **参数**：
+
 - `--input`：日报文件夹路径（必需）
 - `--output`：输出路径（可选，默认自动计算）
-- `--base-path`：Obsidian vault 基础路径（默认：/04_自我管理/00_日志）
+- `--base-path`：周报基础路径（默认：`/04_自我管理/00_日志`）
+- `--weekly-root`：历史周报根目录；未提供时尝试从输出路径或 `base-path` 推断
+- `--previous-report`：显式指定上一份周报路径，优先级高于 `--weekly-root`
+- `--auto-confirm`：跳过终端交互确认，直接继续生成模板
 
-## requirements.txt
+**范围判定规则**：
 
-依赖：`pyyaml>=6.0`、`python-frontmatter>=1.0.0`
+1. 优先读取上一份周报正文中的 `时间范围`。
+2. 本次候选开始日期 = 上次结束日期 + 1 天。
+3. 本次候选结束日期 = 当前输入日志中的最近日期。
+4. 若未找到可解析的历史周报，则退回为当前输入日志的最小/最大日期。
+5. 脚本会输出候选范围摘要；在交互终端中会要求用户确认后再继续。
+
+**输出骨架新增内容**：
+
+脚本生成的模板骨架除了原有 9 大板块外，还会在每个项目前补出以下 3 条研究型叙事占位：
+
+1. `研究系统定位`
+2. `问题提出`
+3. `核心思考`
+
+**边界**：该脚本只生成模板骨架与候选范围摘要，不负责从日报内容中自动填充具体研究进展；内容填充仍由 AI 根据 `SKILL.md` 规则完成。

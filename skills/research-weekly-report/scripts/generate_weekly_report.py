@@ -3,205 +3,396 @@
 科研周报生成辅助脚本
 
 功能：
-- 生成周报元数据（标题、日期范围、周次）
-- 从日报文件中提取 tags
-- 计算输出路径
-- 生成周报模板结构
+- 自动定位上一份周报并解析其时间范围
+- 基于历史周报与当前日志确定本次候选覆盖范围
+- 输出候选范围摘要，并在交互环境中要求用户确认
+- 从候选日志中提取 tags
+- 生成符合当前 skill 规范的周报模板骨架
 
-Input: 日报文件或文件夹路径
+Input: 日报文件或文件夹路径，可选历史周报路径或周报根目录
 Output: 周报模板 Markdown 文件
-Pos: 辅助 AI 生成周报的工具脚本，简化重复性任务
+Pos: 辅助 AI 生成周报的工具脚本，负责确定性范围判定与模板骨架生成
 """
 
 import argparse
+import re
 import sys
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import List, Set, Dict, Tuple
+from typing import List, Optional, Set, Tuple
+
 import frontmatter
 import yaml
 
 
+TIME_RANGE_PATTERN = re.compile(
+    r"(?:\*\*)?时间范围(?:\*\*)?[:：]\s*(\d{4}-\d{2}-\d{2})\s*至\s*(\d{4}-\d{2}-\d{2})"
+)
+DATE_TOKEN_PATTERN = re.compile(r"(?<!\d)(\d{8}|\d{6})(?!\d)")
+
+
+@dataclass
+class LogInfo:
+    path: Path
+    date: datetime
+
+
+@dataclass
+class WeeklyReportInfo:
+    path: Path
+    start_date: datetime
+    end_date: datetime
+
+
+def configureConsoleEncoding() -> None:
+    """
+    在 Windows 终端中显式使用 UTF-8，避免中文输出乱码。
+    """
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
+
+def parseDateString(raw_value) -> Optional[datetime]:
+    """
+    将多种日期输入解析为 datetime（仅保留日期部分）。
+    """
+    if isinstance(raw_value, datetime):
+        return datetime(raw_value.year, raw_value.month, raw_value.day)
+
+    if isinstance(raw_value, date):
+        return datetime(raw_value.year, raw_value.month, raw_value.day)
+
+    if not isinstance(raw_value, str):
+        return None
+
+    normalized_value = raw_value.strip()
+
+    date_match = re.search(r"(\d{4})[-/.](\d{2})[-/.](\d{2})", normalized_value)
+    if date_match:
+        year, month, day = map(int, date_match.groups())
+        return datetime(year, month, day)
+
+    digit_match = DATE_TOKEN_PATTERN.search(normalized_value)
+    if not digit_match:
+        return None
+
+    token = digit_match.group(1)
+    try:
+        if len(token) == 8:
+            return datetime.strptime(token, "%Y%m%d")
+        return datetime.strptime(token, "%y%m%d")
+    except ValueError:
+        return None
+
+
+def extractDateFromDailyLog(log_path: Path) -> Optional[datetime]:
+    """
+    优先从文件名提取日期，失败时再尝试从 frontmatter 读取日期。
+    """
+    matches = DATE_TOKEN_PATTERN.findall(log_path.stem)
+    for token in reversed(matches):
+        parsed_date = parseDateString(token)
+        if parsed_date is not None:
+            return parsed_date
+
+    try:
+        with open(log_path, "r", encoding="utf-8") as file_handle:
+            post = frontmatter.load(file_handle)
+    except Exception as exc:
+        print(f"警告: 无法解析文件日期 {log_path}: {exc}", file=sys.stderr)
+        return None
+
+    for key in ("创建时间", "日期", "date"):
+        parsed_date = parseDateString(post.metadata.get(key))
+        if parsed_date is not None:
+            return parsed_date
+
+    return None
+
+
+def collectDailyLogPaths(input_path: Path) -> List[Path]:
+    """
+    收集输入路径下的日报 Markdown 文件，排除已有周报文件。
+    """
+    if input_path.is_file():
+        return [input_path]
+
+    return sorted(
+        [
+            path
+            for path in input_path.rglob("*.md")
+            if not path.name.startswith("周报_")
+        ]
+    )
+
+
+def collectLogInfos(daily_log_paths: List[Path]) -> List[LogInfo]:
+    """
+    收集所有带日期的日报信息。
+    """
+    log_infos = []
+
+    for log_path in daily_log_paths:
+        parsed_date = extractDateFromDailyLog(log_path)
+        if parsed_date is None:
+            print(f"警告: 无法确定日志日期，已跳过 {log_path}", file=sys.stderr)
+            continue
+
+        log_infos.append(LogInfo(path=log_path, date=parsed_date))
+
+    return sorted(log_infos, key=lambda item: (item.date, item.path.name))
+
+
 def extractTagsFromDailyLogs(daily_log_paths: List[Path]) -> Set[str]:
     """
-    从日报文件中提取 tags
-    
-    Args:
-        daily_log_paths: 日报文件路径列表
-    
-    Returns:
-        去重后的 tags 集合
+    从日报文件中提取 tags。
     """
     all_tags = set()
-    
+
     for log_path in daily_log_paths:
         if not log_path.exists():
             print(f"警告: 文件不存在 {log_path}", file=sys.stderr)
             continue
-        
+
         try:
-            with open(log_path, 'r', encoding='utf-8') as f:
-                post = frontmatter.load(f)
-                
-            if 'tags' in post.metadata:
-                tags = post.metadata['tags']
-                if isinstance(tags, list):
-                    all_tags.update(tags)
-                elif isinstance(tags, str):
-                    all_tags.add(tags)
-        except Exception as e:
-            print(f"警告: 无法解析文件 {log_path}: {e}", file=sys.stderr)
-    
+            with open(log_path, "r", encoding="utf-8") as file_handle:
+                post = frontmatter.load(file_handle)
+
+            raw_tags = post.metadata.get("tags")
+            if isinstance(raw_tags, list):
+                all_tags.update(raw_tags)
+            elif isinstance(raw_tags, str):
+                all_tags.add(raw_tags)
+        except Exception as exc:
+            print(f"警告: 无法解析文件 {log_path}: {exc}", file=sys.stderr)
+
     return all_tags
 
 
-def calculateDateRange(daily_log_paths: List[Path]) -> Tuple[datetime, datetime]:
+def normalizeTags(tags: Set[str]) -> List[str]:
     """
-    从日报文件名或内容中计算日期范围
-    
-    Args:
-        daily_log_paths: 日报文件路径列表
-    
-    Returns:
-        (开始日期, 结束日期)
+    保留 `日志/周报`，过滤其他 `日志/` 前缀标签。
     """
-    dates = []
-    
-    for log_path in daily_log_paths:
-        # 尝试从文件名提取日期（如：日报_260118.md）
-        name = log_path.stem
-        if '_' in name:
-            date_part = name.split('_')[-1]
-            try:
-                # 尝试解析 YYMMDD 格式
-                if len(date_part) == 6 and date_part.isdigit():
-                    year = int('20' + date_part[:2])
-                    month = int(date_part[2:4])
-                    day = int(date_part[4:6])
-                    dates.append(datetime(year, month, day))
-            except ValueError:
-                pass
-        
-        # 尝试从 frontmatter 提取日期
+    filtered_tags = []
+
+    for tag in sorted(tags):
+        if tag == "日志/周报":
+            continue
+        if tag.startswith("日志/"):
+            continue
+        filtered_tags.append(tag)
+
+    return ["日志/周报", *filtered_tags]
+
+
+def extractTimeRangeFromWeeklyReport(report_path: Path) -> Optional[Tuple[datetime, datetime]]:
+    """
+    从历史周报正文中解析时间范围。
+    """
+    try:
+        content = report_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        print(f"警告: 无法读取周报 {report_path}: {exc}", file=sys.stderr)
+        return None
+
+    match = TIME_RANGE_PATTERN.search(content)
+    if match is None:
+        return None
+
+    start_date = datetime.strptime(match.group(1), "%Y-%m-%d")
+    end_date = datetime.strptime(match.group(2), "%Y-%m-%d")
+    return start_date, end_date
+
+
+def findPreviousWeeklyReport(
+    weekly_root: Path,
+    latest_log_date: datetime,
+    current_output_path: Optional[Path],
+) -> Optional[WeeklyReportInfo]:
+    """
+    在周报根目录中查找最近一份已覆盖到当前日志日期之前的周报。
+    """
+    report_infos = []
+    resolved_output_path = None
+
+    if current_output_path is not None:
         try:
-            with open(log_path, 'r', encoding='utf-8') as f:
-                post = frontmatter.load(f)
-            
-            if '创建时间' in post.metadata:
-                create_time = post.metadata['创建时间']
-                if isinstance(create_time, str):
-                    # 尝试解析多种日期格式
-                    for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y.%m.%d']:
-                        try:
-                            dates.append(datetime.strptime(create_time.split()[0], fmt))
-                            break
-                        except ValueError:
-                            continue
-        except Exception:
-            pass
-    
-    if not dates:
-        # 如果没有找到日期，使用当前日期作为结束日期，7天前作为开始日期
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=6)
-        return start_date, end_date
-    
-    return min(dates), max(dates)
+            resolved_output_path = current_output_path.resolve()
+        except FileNotFoundError:
+            resolved_output_path = current_output_path.absolute()
+
+    for report_path in weekly_root.rglob("周报_*.md"):
+        try:
+            resolved_report_path = report_path.resolve()
+        except FileNotFoundError:
+            resolved_report_path = report_path.absolute()
+
+        if resolved_output_path is not None and resolved_report_path == resolved_output_path:
+            continue
+
+        parsed_range = extractTimeRangeFromWeeklyReport(report_path)
+        if parsed_range is None:
+            continue
+
+        start_date, end_date = parsed_range
+        if end_date <= latest_log_date:
+            report_infos.append(
+                WeeklyReportInfo(
+                    path=report_path,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            )
+
+    if not report_infos:
+        return None
+
+    report_infos.sort(key=lambda item: (item.end_date, item.start_date, item.path.as_posix()))
+    return report_infos[-1]
 
 
-def calculateWeekNumber(date: datetime) -> int:
+def resolveWeeklyRoot(
+    weekly_root_arg: Optional[str],
+    output_path: Optional[Path],
+    base_path: str,
+) -> Optional[Path]:
     """
-    计算日期所在的周次（一年中的第几周）
-    
-    Args:
-        date: 日期
-    
-    Returns:
-        周次
+    解析用于搜索历史周报的根目录。
     """
-    return date.isocalendar()[1]
+    candidate_paths = []
+
+    if weekly_root_arg:
+        candidate_paths.append(Path(weekly_root_arg))
+
+    if output_path is not None:
+        parents = list(output_path.parents)
+        if len(parents) >= 3:
+            candidate_paths.append(parents[2])
+        if len(parents) >= 1:
+            candidate_paths.append(parents[0])
+
+    candidate_paths.append(Path(base_path))
+
+    for candidate_path in candidate_paths:
+        if candidate_path.exists() and candidate_path.is_dir():
+            return candidate_path
+
+    return None
 
 
-def calculateOutputPath(base_path: str, date: datetime) -> Path:
+def calculateOutputPath(base_path: str, report_date: datetime) -> Path:
     """
-    计算周报输出路径
-    
-    Args:
-        base_path: 基础路径（如：/04_自我管理/00_日志）
-        date: 日期
-    
-    Returns:
-        完整输出路径
+    计算周报输出路径。
     """
-    year = date.strftime('%Y')
-    month = date.strftime('%m')
-    filename = f"周报_{date.strftime('%y%m%d')}.md"
-    
+    year = report_date.strftime("%Y")
+    month = report_date.strftime("%m")
+    filename = f"周报_{report_date.strftime('%y%m%d')}.md"
     return Path(base_path) / year / month / filename
 
 
-def formatDateWithOrdinal(dt: datetime) -> str:
+def formatDateWithOrdinal(current_time: datetime) -> str:
     """
-    格式化日期为 YYYY-MM-Do HH:mm:ss dddd 格式
-    
-    Args:
-        dt: 日期时间对象
-    
-    Returns:
-        格式化后的字符串，如 "2026-01-22nd 10:36:16 Thursday"
+    格式化日期为 YYYY-MM-Do HH:mm:ss dddd。
     """
-    day = dt.day
+    day = current_time.day
     if 11 <= day <= 13:
-        suffix = 'th'
+        suffix = "th"
     else:
-        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
-    
-    return f"{dt.strftime('%Y-%m-')}{day}{suffix} {dt.strftime('%H:%M:%S %A')}"
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+
+    return f"{current_time.strftime('%Y-%m-')}{day}{suffix} {current_time.strftime('%H:%M:%S %A')}"
+
+
+def summarizeLogDates(log_infos: List[LogInfo]) -> str:
+    """
+    将候选日志日期整理为便于核对的字符串。
+    """
+    unique_dates = sorted({log_info.date.strftime("%Y-%m-%d") for log_info in log_infos})
+    return ", ".join(unique_dates)
+
+
+def printRangeSummary(
+    previous_report: Optional[WeeklyReportInfo],
+    candidate_start: datetime,
+    candidate_end: datetime,
+    candidate_logs: List[LogInfo],
+    excluded_logs: List[LogInfo],
+) -> None:
+    """
+    输出候选范围摘要，供用户核对。
+    """
+    print("\n=== 周报范围核对摘要 ===")
+
+    if previous_report is None:
+        print("上一份周报: 未找到可解析的历史周报，本次回退为当前日志最小/最大日期")
+    else:
+        print(f"上一份周报: {previous_report.path}")
+        print(
+            "上一份周报时间范围: "
+            f"{previous_report.start_date.strftime('%Y-%m-%d')} 至 "
+            f"{previous_report.end_date.strftime('%Y-%m-%d')}"
+        )
+
+    print(
+        "本次候选时间范围: "
+        f"{candidate_start.strftime('%Y-%m-%d')} 至 {candidate_end.strftime('%Y-%m-%d')}"
+    )
+    print(f"本次候选日志数: {len(candidate_logs)}")
+    print(f"本次候选日志日期: {summarizeLogDates(candidate_logs)}")
+
+    if excluded_logs:
+        print(f"已排除的更早日志数: {len(excluded_logs)}")
+        print(f"已排除日志日期: {summarizeLogDates(excluded_logs)}")
+
+
+def confirmCandidateRange(auto_confirm: bool) -> None:
+    """
+    在交互环境中要求用户确认候选范围。
+    """
+    if auto_confirm:
+        print("已启用 --auto-confirm，跳过交互确认。")
+        return
+
+    if not sys.stdin.isatty():
+        print("当前为非交互环境，请根据上述摘要在上层流程中与用户核对候选范围。")
+        return
+
+    answer = input("\n是否接受该候选范围并继续生成模板？[y/N]: ").strip().lower()
+    if answer not in {"y", "yes"}:
+        print("已取消生成，请调整输入、显式指定历史周报，或重新筛选日志后再执行。", file=sys.stderr)
+        sys.exit(2)
 
 
 def generateWeeklyReportTemplate(
     start_date: datetime,
     end_date: datetime,
     tags: Set[str],
-    output_path: Path
 ) -> str:
     """
-    生成周报模板内容
-    
-    Args:
-        start_date: 开始日期
-        end_date: 结束日期
-        tags: 标签集合
-        output_path: 输出路径
-    
-    Returns:
-        周报模板 Markdown 内容
+    生成符合当前 skill 规范的周报模板内容。
     """
     title = f"周报_{end_date.strftime('%y%m%d')}"
     now = formatDateWithOrdinal(datetime.now())
-    
-    # 确保包含 '日志/周报' tag
-    tags_list = ['日志/周报']
-    tags_list.extend(sorted([tag for tag in tags if tag != '日志/周报']))
-    
-    # 生成 frontmatter
+    tags_list = normalizeTags(tags)
+
     frontmatter_dict = {
-        '标题': title,
-        'tags': tags_list,
-        '创建时间': now,
-        '编辑时间': now
+        "标题": title,
+        "tags": tags_list,
+        "创建时间": now,
+        "编辑时间": now,
     }
-    
-    # 生成 YAML frontmatter
+
     frontmatter_yaml = yaml.dump(
         frontmatter_dict,
         allow_unicode=True,
         default_flow_style=False,
-        sort_keys=False
+        sort_keys=False,
     )
-    
-    # 生成模板内容
-    template = f"""---
+
+    return f"""---
 {frontmatter_yaml.strip()}
 ---
 
@@ -219,13 +410,17 @@ def generateWeeklyReportTemplate(
 
 ## 项目一：[项目名称]
 
+**研究系统定位**：[待填充：说明该项目在整体研究系统中的位置、上游与下游关系]
+**问题提出**：[待填充：说明本周聚焦的问题是什么、为什么提出] 【日期·分类】
+**核心思考**：[待填充：说明当前判断、机理分析、假设或方案取舍依据] 【日期·分类】
+
 ### 1. 研究内容标题
 
 [待填充：一句话概括]
 
 ### 2. 研究方法
 
-- [待填充：算法/策略/实验设置] 【日期·分类】
+- [待填充：算法/策略/实验设置，以及与问题提出的对应关系] 【日期·分类】
 
 ### 3. 技术路线
 
@@ -234,24 +429,24 @@ def generateWeeklyReportTemplate(
 ### 4. 核心模型
 
 - **模型架构**：[待填充]
-- **关键改动**：[待填充] 【日期·分类】
+- **关键改动**：[待填充：修改点或关键假设] 【日期·分类】
 
 ### 5. 仿真结果
 
-- **核心指标**：[待填充] 【日期·分类】
+- **核心指标/现象**：[待填充：数值或观察结论] 【日期·分类】
 - 训练曲线见图1
 
 ### 6. 存在问题
 
-- [待填充：工程/实验问题] 【日期·分类】
+- [待填充：工程/实验问题或当前局限] 【日期·分类】
 
 ### 7. 难点问题
 
-- [待填充：理论/机制难点] 【日期·分类】
+- [待填充：理论/机制难点，以及为何尚未解决] 【日期·分类】
 
 ### 8. 解决思路
 
-- [待填充：尝试与计划] 【日期·分类】
+- [待填充：已尝试方案、下一步方案与选择依据] 【日期·分类】
 
 ### 9. 小论文撰写任务
 
@@ -266,99 +461,160 @@ def generateWeeklyReportTemplate(
 
 ![[attachments/image.png|描述]]
 """
-    
-    return template
 
 
 def main():
+    configureConsoleEncoding()
+
     parser = argparse.ArgumentParser(
-        description='生成科研周报模板',
+        description="生成科研周报模板",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python generate_weekly_report.py --input daily-logs/ --output weekly-report.md
-  python generate_weekly_report.py --input daily-logs/2026-01/ --base-path "/04_自我管理/00_日志"
-        """
+  python generate_weekly_report.py --input daily-logs/
+  python generate_weekly_report.py --input daily-logs/2026-01/ --weekly-root weekly-reports/
+  python generate_weekly_report.py --input daily-logs/ --previous-report weekly-reports/2026/01/周报_260118.md
+        """,
     )
-    
+
     parser.add_argument(
-        '--input',
+        "--input",
         type=str,
         required=True,
-        help='日报文件或文件夹路径'
+        help="日报文件或文件夹路径",
     )
-    
     parser.add_argument(
-        '--output',
+        "--output",
         type=str,
-        help='输出文件路径（可选，默认自动计算）'
+        help="输出文件路径（可选，默认自动计算）",
     )
-    
     parser.add_argument(
-        '--base-path',
+        "--base-path",
         type=str,
-        default='/04_自我管理/00_日志',
-        help='Obsidian vault 基础路径（默认: /04_自我管理/00_日志）'
+        default="/04_自我管理/00_日志",
+        help="周报基础路径（默认: /04_自我管理/00_日志）",
     )
-    
+    parser.add_argument(
+        "--weekly-root",
+        type=str,
+        help="历史周报根目录；未提供时尝试从输出路径或 base-path 推断",
+    )
+    parser.add_argument(
+        "--previous-report",
+        type=str,
+        help="显式指定上一份周报路径，优先级高于 --weekly-root",
+    )
+    parser.add_argument(
+        "--auto-confirm",
+        action="store_true",
+        help="跳过交互确认，直接继续生成模板",
+    )
+
     args = parser.parse_args()
-    
-    # 获取日报文件列表
+
     input_path = Path(args.input)
     if not input_path.exists():
         print(f"错误: 输入路径不存在 {input_path}", file=sys.stderr)
         sys.exit(1)
-    
-    if input_path.is_file():
-        daily_log_paths = [input_path]
-    else:
-        # 递归查找所有 .md 文件
-        daily_log_paths = list(input_path.glob('**/*.md'))
-    
+
+    daily_log_paths = collectDailyLogPaths(input_path)
     if not daily_log_paths:
-        print(f"错误: 未找到日报文件", file=sys.stderr)
+        print("错误: 未找到可用的日报文件", file=sys.stderr)
         sys.exit(1)
-    
-    print(f"找到 {len(daily_log_paths)} 个日报文件")
-    
-    # 提取 tags
-    tags = extractTagsFromDailyLogs(daily_log_paths)
-    print(f"提取到 {len(tags)} 个 tags: {sorted(tags)}")
-    
-    # 计算日期范围
-    start_date, end_date = calculateDateRange(daily_log_paths)
-    print(f"日期范围: {start_date.strftime('%Y-%m-%d')} 至 {end_date.strftime('%Y-%m-%d')}")
-    
-    # 计算输出路径
+
+    print(f"找到 {len(daily_log_paths)} 个 Markdown 日志文件")
+
+    log_infos = collectLogInfos(daily_log_paths)
+    if not log_infos:
+        print("错误: 未能从输入日志中解析出任何日期", file=sys.stderr)
+        sys.exit(1)
+
+    earliest_log_date = log_infos[0].date
+    latest_log_date = log_infos[-1].date
+
     if args.output:
         output_path = Path(args.output)
     else:
-        output_path = calculateOutputPath(args.base_path, end_date)
-    
-    print(f"输出路径: {output_path}")
-    
-    # 生成周报模板
+        output_path = calculateOutputPath(args.base_path, latest_log_date)
+
+    previous_report = None
+
+    if args.previous_report:
+        previous_report_path = Path(args.previous_report)
+        if not previous_report_path.exists():
+            print(f"错误: 指定的上一份周报不存在 {previous_report_path}", file=sys.stderr)
+            sys.exit(1)
+
+        parsed_range = extractTimeRangeFromWeeklyReport(previous_report_path)
+        if parsed_range is None:
+            print(
+                f"错误: 无法从指定周报中解析时间范围 {previous_report_path}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        previous_report = WeeklyReportInfo(
+            path=previous_report_path,
+            start_date=parsed_range[0],
+            end_date=parsed_range[1],
+        )
+    else:
+        weekly_root = resolveWeeklyRoot(args.weekly_root, output_path, args.base_path)
+        if weekly_root is not None:
+            previous_report = findPreviousWeeklyReport(weekly_root, latest_log_date, output_path)
+        else:
+            print("提示: 未找到可用的历史周报根目录，本次回退为当前日志最小/最大日期。")
+
+    if previous_report is None:
+        start_date = earliest_log_date
+    else:
+        start_date = previous_report.end_date + timedelta(days=1)
+
+    end_date = latest_log_date
+
+    candidate_logs = [
+        log_info
+        for log_info in log_infos
+        if start_date <= log_info.date <= end_date
+    ]
+    excluded_logs = [
+        log_info
+        for log_info in log_infos
+        if log_info.date < start_date
+    ]
+
+    printRangeSummary(previous_report, start_date, end_date, candidate_logs, excluded_logs)
+
+    if not candidate_logs:
+        print(
+            "错误: 当前输入日志在上一份周报之后没有新的候选内容，请检查历史周报或输入日志范围。",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    confirmCandidateRange(args.auto_confirm)
+
+    candidate_log_paths = [log_info.path for log_info in candidate_logs]
+    tags = extractTagsFromDailyLogs(candidate_log_paths)
+    print(f"提取到 {len(tags)} 个原始 tags: {sorted(tags)}")
+    print(f"过滤后 tags: {normalizeTags(tags)}")
+
     template = generateWeeklyReportTemplate(
         start_date=start_date,
         end_date=end_date,
         tags=tags,
-        output_path=output_path
     )
-    
-    # 确保输出目录存在
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # 写入文件
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(template)
-    
-    print(f"\n✅ 周报模板已生成: {output_path}")
+    with open(output_path, "w", encoding="utf-8") as file_handle:
+        file_handle.write(template)
+
+    print(f"\n周报模板已生成: {output_path}")
     print("\n下一步:")
-    print("1. 使用 AI 根据日报内容填充各个板块")
-    print("2. 格式化数学公式为 LaTeX 格式")
-    print("3. 生成图片索引")
-    print("4. 调整和完善周报内容")
+    print("1. 根据候选日志内容补全研究系统定位、问题提出、核心思考")
+    print("2. 按 9 大板块填充本周证据、问题与解决思路")
+    print("3. 格式化数学公式与图片索引")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
