@@ -15,3 +15,8 @@
 - **地位**：科研周报生成技能
 - **功能**：将日报内容转换为结构化的科研周报，支持9大核心板块、自动提取tags、LaTeX公式格式化、图文联动
 - **详情**：参见 [research-weekly-report/SKILL.md](research-weekly-report/SKILL.md)
+
+### distiller/
+- **地位**：经验萃取引擎技能
+- **功能**：将 AI 编码会话中的经验提炼为结构化、可复用的知识文档，支持 4 个核心场景 + 通用兜底，Obsidian 兼容输出
+- **详情**：参见 [distiller/SKILL.md](distiller/SKILL.md)

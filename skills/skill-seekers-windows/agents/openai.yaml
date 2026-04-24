@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Seekers Windows"
+  short_description: "Windows Skill Seekers workflow helper"
+  default_prompt: "Use $skill-seekers-windows to run Skill Seekers safely on Windows for a file, repo, or docs site."
