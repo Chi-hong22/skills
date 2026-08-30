@@ -10,6 +10,6 @@
 
 | 文件 | 何时读取 | 说明 |
 |------|----------|------|
-| `prompt.md` | 首次使用或需要深入理解完整提示词规范时 | 完整提示词（Background/Profile/Skills/Goals/Constraints/Workflow/OutputFormat/Initialization） |
-| `example_output.md` | 需要参考成品周报格式时 | 真实周报示例（周报_260118），已切换到“研究系统定位 → 问题提出 → 核心思考 → 9大板块”的新叙事结构，含多项目、附图索引 |
-| `obsidian_template.md` | 需要了解 Templater 自动化模板时 | Obsidian Templater 脚本，自动创建与移动周报文件，并内置“研究系统定位 → 问题提出 → 核心思考 → 9大板块”的新骨架 |
+| `prompt.md` | 首次使用或筛选、归并、判断边界不明确时 | 重要性过滤、问题归并、判断变化、证据边界和压缩检查 |
+| `example_output.md` | 需要参考成品周报格式时 | “自然段概述 + 主题详述”的真实周报示例，含必要附图索引 |
+| `obsidian_template.md` | 需要了解 Templater 自动化模板时 | 自动创建与移动周报文件，并内置概述及三层主题骨架 |
