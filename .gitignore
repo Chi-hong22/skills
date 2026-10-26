@@ -1,2 +1,4 @@
 .cursor/
 test/
+.distiller
+*.zip
