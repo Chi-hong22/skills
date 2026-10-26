@@ -12,7 +12,7 @@ skills/
 
 ## 目录说明
 
-- `.cursor/skills/` - 正在使用中的技能文件，包含从 Cursor 技能市场或其他来源安装的技能
+- `.cursor/skills/` - 正在使用中的技能文件，包含从 Cursor 技能市场或其他来源安装的技能；该目录被 `.gitignore` 忽略，本地未安装时不存在，不随仓库分发
 - `skills/` - 自己创建的原创技能文件，用于个人项目或分享
 
 ## 文档更新规范
@@ -38,5 +38,5 @@ skills/
 
 ## 相关文档
 
-- [正在使用的 Skills](.cursor/skills/README.md)
+- 正在使用的 Skills：安装在本地 `~/.dsh/skills/` 与 `~/.cc-switch/skills/`，不入本仓库（`.cursor/` 被 `.gitignore` 忽略）
 - [自创 Skills](skills/README.md)
