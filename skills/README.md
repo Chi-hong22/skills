@@ -16,6 +16,11 @@
 - **功能**：将日报内容转换为结构化的科研周报，支持9大核心板块、自动提取tags、LaTeX公式格式化、图文联动
 - **详情**：参见 [research-weekly-report/SKILL.md](research-weekly-report/SKILL.md)
 
+### pandoc-converter/
+- **地位**：文档格式互转技能（pandoc CLI），内置中文报告版式
+- **功能**：Markdown/Word/PDF/HTML/LaTeX/EPUB 互转，支持 Obsidian 图片嵌入预处理与中文化版式管线
+- **详情**：参见 [pandoc-converter/README.md](pandoc-converter/README.md)
+
 ### distiller/
 - **地位**：经验萃取引擎技能
 - **功能**：将 AI 编码会话中的经验提炼为结构化、可复用的知识文档，支持 4 个核心场景 + 通用兜底，Obsidian 兼容输出
