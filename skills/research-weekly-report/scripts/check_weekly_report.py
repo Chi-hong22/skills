@@ -5,25 +5,32 @@
 用法：python check_weekly_report.py <周报.md> [--json]
 退出码：0 无阻断问题；1 存在 ERR。
 口径：正文 = 去掉 frontmatter、标题行、引用块、表格、图题表题、代码块后的汉字数。
+图片只计真实图片文件（![[x.png]] 或 ![](x.png)），不把笔记嵌入算作图。
+
+Input: 周报 Markdown 路径（UTF-8），可选 --json
+Output: 人读检查结果或 JSON；退出码 0 无阻断，1 有 ERR
+Pos: 交付前机检脚本，只报机械可判问题，不替代内容验收
 """
 import json
 import re
 import sys
 
 LIMITS = {"body_cjk": 1500, "quote_cjk": 400, "total_cjk": 2600, "figures": 4, "lede": 120, "theme_lead": 40}
+IMAGE_EXT = re.compile(r"\.(png|jpe?g|gif|webp|svg|bmp|tiff?)$", re.IGNORECASE)
 CJK = re.compile(r"[\u4e00-\u9fff]")
 CAPTION = re.compile(r"^(\*\*|[-*]\s+\*\*)(图|表)\s*(\d+)")
 PROCESS = [("第一步", r"第一步"), ("先…再…式步骤", r"先[^。；\n]{0,12}再"),
            ("冻结参数或种子", r"冻结[^。；\n]{0,8}(参数|种子|配置)"), ("排期", r"排期"),
            ("拟于或计划在", r"(拟于|计划在)")]
 STATUS = ["定稿", "已证明", "完全解决", "全部完成"]
+STATUS_LOOSE = re.compile(r"(?<![已未不])完成(?!率|度)|(?<![未已不])证明")
 
 
 def cjk(text):
     return len(CJK.findall(text))
 
 
-def split_frontmatter(lines):
+def splitFrontmatter(lines):
     if lines and lines[0].strip() == "---":
         for i in range(1, len(lines)):
             if lines[i].strip() == "---":
@@ -50,19 +57,32 @@ def collect(body):
         if CAPTION.match(s):
             caption.append(s)
             continue
-        if s.startswith("#") or s.startswith("![["):
+        if s.startswith("#") or s.startswith("!["):
             continue
         kept.append(line)
     return kept, quote, table, caption
 
 
-def first_paragraph_after(lines, start):
+def firstParagraphAfter(lines, start):
     for i in range(start + 1, len(lines)):
         s = lines[i].strip()
         if not s or s.startswith("#"):
             continue
         return s, i
     return "", start
+
+
+def countFigures(text):
+    """只计真实图片文件：wikilink 嵌入与标准 Markdown 图片，排除笔记嵌入。"""
+    figures = 0
+    for raw in re.findall(r"!\[\[([^\]]+)\]\]", text):
+        target = raw.split("|")[0].split("#")[0].strip()
+        if IMAGE_EXT.search(target):
+            figures += 1
+    for raw in re.findall(r"!\[[^\]]*\]\(([^)\s]+)", text):
+        if IMAGE_EXT.search(raw.strip("<>")):
+            figures += 1
+    return figures
 
 
 def main():
@@ -74,7 +94,7 @@ def main():
     as_json = "--json" in sys.argv
     text = open(path, encoding="utf-8").read()
     lines = text.splitlines()
-    _, body = split_frontmatter(lines)
+    _, body = splitFrontmatter(lines)
     kept, quote, table, caption = collect(body)
 
     body_text = "\n".join(kept)
@@ -94,7 +114,7 @@ def main():
         add("ERR", "概述小节", "缺少 本周概述 小节")
     try:
         idx = next(i for i, l in enumerate(lines) if "本周概述" in l and l.strip().startswith("##"))
-        lede, _ = first_paragraph_after(lines, idx)
+        lede, _ = firstParagraphAfter(lines, idx)
         lede_n = cjk(lede)
         add("ERR" if lede_n > LIMITS["lede"] else "OK", "概述科普首段", "%d / %d 汉字" % (lede_n, LIMITS["lede"]))
     except StopIteration:
@@ -106,16 +126,18 @@ def main():
             continue
         if "概述" in s or "文献" in s or "附图" in s or "问题与" in s:
             continue
-        lead, _ = first_paragraph_after(lines, i)
+        lead, _ = firstParagraphAfter(lines, i)
         lead = re.sub(r"^[-*]\s+", "", lead)
         n = cjk(lead)
         if n > LIMITS["theme_lead"]:
             add("WARN", "主题定位句", "第 %d 行后首段 %d 汉字，建议压到 %d 以内" % (i + 1, n, LIMITS["theme_lead"]))
-            break
 
     for word in STATUS:
         if word in body_text:
             add("WARN", "状态词", "出现 %s，确认不是把初稿写成定稿、把未验证写成已证明" % word)
+    loose = STATUS_LOOSE.search(body_text)
+    if loose:
+        add("WARN", "状态词", "出现 %s，确认不是把未完成写成已完成、把未验证写成已证明" % loose.group(0))
 
     for name, pattern in PROCESS:
         if re.search(pattern, body_text):
@@ -130,8 +152,8 @@ def main():
     for kind, nums in (("图", figs), ("表", tabs)):
         if nums and nums != list(range(1, len(nums) + 1)):
             add("ERR", "编号顺序", "%s编号 %s，应按出现顺序从 1 连续" % (kind, nums))
-    n_img = len(re.findall(r"!\[\[", text))
-    add("WARN" if n_img > LIMITS["figures"] else "OK", "图片数", "%d / %d" % (n_img, LIMITS["figures"]))
+    n_img = countFigures(text)
+    add("ERR" if n_img > LIMITS["figures"] else "OK", "图片数", "%d / %d" % (n_img, LIMITS["figures"]))
     if n_img < 2:
         add("WARN", "图片数下限", "仅 %d 张，规则期望 2–4 张；确有理由可保留" % n_img)
 
