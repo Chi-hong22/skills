@@ -128,5 +128,5 @@ description: >-
 - 成品参考：`references/example_output.md` 保存用户已确认定稿的 261018 周报；其中课题结论与数字只属于该案例，不迁移到其他周报。
 - 易错对照：`references/revision_lessons.md` 汇集本次两段撰写记录形成的正反例，用于核对相同错误，不作为新的科研事实来源。
 - 需要 Templater 骨架时：`references/obsidian_template.md`；需要确定性范围和骨架时：`scripts/generate_weekly_report.py`。模板和脚本不负责科研判断。
-- 交付前机检篇幅、必填小节、状态词、过程叙述与表图编号：`scripts/check_weekly_report.py <周报路径>`；字数口径为去掉 frontmatter、引用块、表格、图题表题与代码块后的汉字数。
+- 交付前机检篇幅、必填小节、状态词、过程叙述、表图编号与图片数：`scripts/check_weekly_report.py <周报路径>`；字数口径见上文「篇幅硬上限」。
 - `evals/evals.json` 验收分析结果、归因保真、读者可理解性、主题与文献归属、内部笔记过滤及图表和范围条件。先验收内容，再检查格式；只有数字或文件结构检查通过，不算完整通过。

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""周报机检：篇幅硬上限、必填小节、概述科普首段、状态词、过程叙述、表图编号。
+"""周报机检：篇幅硬上限、必填小节、概述科普首段、状态词、过程叙述、表图编号与图片数。
 
 用法：python check_weekly_report.py <周报.md> [--json]
 退出码：0 无阻断问题；1 存在 ERR。
@@ -10,6 +10,7 @@
 Input: 周报 Markdown 路径（UTF-8），可选 --json
 Output: 人读检查结果或 JSON；退出码 0 无阻断，1 有 ERR
 Pos: 交付前机检脚本，只报机械可判问题，不替代内容验收
+一旦文件被更新，务必更新开头注释及所属文件夹的 README.md。
 """
 import json
 import re
@@ -22,15 +23,15 @@ CAPTION = re.compile(r"^(\*\*|[-*]\s+\*\*)(图|表)\s*(\d+)")
 PROCESS = [("第一步", r"第一步"), ("先…再…式步骤", r"先[^。；\n]{0,12}再"),
            ("冻结参数或种子", r"冻结[^。；\n]{0,8}(参数|种子|配置)"), ("排期", r"排期"),
            ("拟于或计划在", r"(拟于|计划在)")]
-STATUS = ["定稿", "已证明", "完全解决", "全部完成"]
-STATUS_LOOSE = re.compile(r"(?<![已未不])完成(?!率|度)|(?<![未已不])证明")
+STATUS = ["定稿", "已证明", "完全解决"]
+STATUS_LOOSE = re.compile(r"(?<![未不有])完成(?!率|度)|(?<![未已不经有])证明")
 
 
 def cjk(text):
     return len(CJK.findall(text))
 
 
-def splitFrontmatter(lines):
+def split_frontmatter(lines):
     if lines and lines[0].strip() == "---":
         for i in range(1, len(lines)):
             if lines[i].strip() == "---":
@@ -57,13 +58,13 @@ def collect(body):
         if CAPTION.match(s):
             caption.append(s)
             continue
-        if s.startswith("#") or s.startswith("!["):
+        if s.startswith("#") or s.startswith("![["):
             continue
         kept.append(line)
     return kept, quote, table, caption
 
 
-def firstParagraphAfter(lines, start):
+def first_paragraph_after(lines, start):
     for i in range(start + 1, len(lines)):
         s = lines[i].strip()
         if not s or s.startswith("#"):
@@ -94,7 +95,7 @@ def main():
     as_json = "--json" in sys.argv
     text = open(path, encoding="utf-8").read()
     lines = text.splitlines()
-    _, body = splitFrontmatter(lines)
+    _, body = split_frontmatter(lines)
     kept, quote, table, caption = collect(body)
 
     body_text = "\n".join(kept)
@@ -114,7 +115,7 @@ def main():
         add("ERR", "概述小节", "缺少 本周概述 小节")
     try:
         idx = next(i for i, l in enumerate(lines) if "本周概述" in l and l.strip().startswith("##"))
-        lede, _ = firstParagraphAfter(lines, idx)
+        lede, _ = first_paragraph_after(lines, idx)
         lede_n = cjk(lede)
         add("ERR" if lede_n > LIMITS["lede"] else "OK", "概述科普首段", "%d / %d 汉字" % (lede_n, LIMITS["lede"]))
     except StopIteration:
@@ -126,7 +127,7 @@ def main():
             continue
         if "概述" in s or "文献" in s or "附图" in s or "问题与" in s:
             continue
-        lead, _ = firstParagraphAfter(lines, i)
+        lead, _ = first_paragraph_after(lines, i)
         lead = re.sub(r"^[-*]\s+", "", lead)
         n = cjk(lead)
         if n > LIMITS["theme_lead"]:
